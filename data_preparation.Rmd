@@ -1,0 +1,31 @@
+---
+title: Data prep for *Impact of Increasing Ischemic Time on Heart Transplantation Outcome*
+author: "Julia (Gege) Ran, William Parker"
+output:
+  rmdformats::material:
+    highlight: tango
+  html_document:
+    theme: cosmo
+    toc: yes
+---
+#Loading Packages
+
+
+This chunk is used to load in the packages in R that help us to tidy, manipulate, and visualize the data. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/julia/SRP/SRP/Codes/SAF SAS files")
+
+```
+
+
+```{r library}
+library(tidyverse)
+library(haven)
+library(rmdformats)
+library(dplyr)
+```
+
