@@ -17,7 +17,7 @@ This chunk is used to load in the packages in R that help us to tidy, manipulate
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
 require("knitr")
-opts_knit$set(root.dir = "C:/Users/julia/SRP/SRP/Codes/SAF SAS files")
+opts_knit$set(root.dir = "C:/Users/julia/SRP/S&D/SharedFiles/pubsaf2103")
 
 ```
 
@@ -27,5 +27,162 @@ library(tidyverse)
 library(haven)
 library(rmdformats)
 library(dplyr)
+```
+
+
+# Data sources
+
+Standard Scientific Registry of Transplant Recipients (SRTR) SAF files
+We uploaded all the relevant files that contained data for the study.
+
+
+```{r data_in}
+# read in the SRTR SAF files
+##all thoracic transplant candidate information
+cand_thor <- read_sas("cand_thor.sas7bdat", NULL) %>%  
+  zap_formats() %>% zap_labels()
+
+#justification for status 1a
+statjust_hr1a <- read_sas("statjust_hr1a.sas7bdat", NULL) %>%
+  zap_formats() %>% zap_labels()
+
+#justification for status 1b
+statjust_hr1b <- read_sas("statjust_hr1b.sas7bdat", NULL) %>%
+  zap_formats() %>% zap_labels()
+
+#transplant result
+tx_hr <- read_sas("tx_hr.sas7bdat", NULL) %>%  
+  zap_formats() %>% zap_labels()
+
+#center-level and opo-level predictors 
+institution <- read_sas("institution.sas7bdat", NULL) %>%  
+  zap_formats() %>% zap_labels()
+
+opo <- read_sas("hist_opo_txc.sas7bdat", NULL) %>% 
+  zap_formats() %>% zap_labels()
+
+donor <- read_sas("donor_deceased.sas7bdat",NULL) %>% 
+  zap_formats() %>%  zap_labels()
+
+```
+
+```{r new justification}
+#justification for new statuses
+setwd("C:/Users/julia/SRP/SRP/Codes/post_justification")
+
+#justification for new status 1
+statjust_hr1 <- read.csv("JustFormHRStat1.csv")
+
+#justification for new status 2
+statjust_hr2 <- read.csv("JustFormHRStat2.csv") 
+
+#justification for new status 3
+statjust_hr3 <- read.csv("JustFormHRStat3.csv") 
+
+#justification for new status 4
+statjust_hr4 <- read.csv("JustFormHRStat4.csv") 
+
+
+#status justification and episodes
+StatusJustEpisode <- read.csv("StatusJustEpisode.csv") 
+
+#linking WlregAuditID to justification ID
+JustFormHRDataLink <- read.csv("JustFormHRDataLink.csv") 
+
+#linking WlregAuditID to Px_ID, the linking is copied from RiskStratDataHR
+WlregAuditId_PxId <- read.csv("WlregAuditId_PxId.csv",col.names = c("WlregAuditId","px_id"))
+
+#JustFormHR
+
+setwd("C:/Users/julia/SRP/SRP/Codes/post_justification")
+JustFormHR <- read.csv("JustFormHR.csv")
+```
+
+
+
+
+# Select study sample
+
+## Define data ranges
+
+This section specifics the dates used in the study. The dates can be modified by changing the date in this chunk of code. 
+
+```{r data_ranges}
+
+start_date <- as.Date("2016-10-18")
+end_date <- as.Date("2019-12-31")
+
+#mark the end of the pre-policy cohort
+pre_policy_end_date <- as.Date("2017-12-31")
+
+
+#mark the start of the post-policy cohort
+post_policy_start_date <- as.Date("2018-10-18")
+
+policy_switch_date <- as.Date("2018-10-18")
+```
+
+##Filter initial listing
+
+In this section, we select only adult, heart-only candidates by excluding pediatric (<=17 yo) listings, multi-organ recipients, and inactive listings.
+
+```{r filter initial listing}
+#keep multi-organ recipients to code as Status 5
+multi <- TRUE
+
+#exclude candidates <18 at the time of listing
+peds <- FALSE
+
+init_list <- cand_thor %>% 
+   mutate(tx_date = REC_TX_DT) %>% 
+    filter(tx_date >= start_date & tx_date <= end_date & WL_ORG == "HR")  %>% 
+  mutate(center = CAN_LISTING_CTR_ID,
+         date_start = tx_date) %>% 
+  filter(CAN_AGE_AT_LISTING >17)
+
+
+#remove multiorgan recipients
+if (multi == FALSE){
+	multi_recips <- tx_hr %>% filter(REC_TX_TY == 2 | REC_TX_TY ==4) %>% select(PX_ID,REC_TX_TY)
+  
+	n_mults <- nrow(init_list %>% filter(PX_ID %in% multi_recips$PX_ID))
+	
+	init_list <- init_list %>% filter(!PX_ID %in% multi_recips$PX_ID)
+	remove(multi_recips)
+}
+
+#filter out inactive listing 
+init_list <- init_list %>%
+  filter(CAN_INIT_STAT %in% 
+           c(2103, 2020, 2030,  
+             2110, 2120, 2130, 
+             2140, 2150, 2160)) 
+
+
+#remove candidates listed at low volume centers
+init_list1 <- init_list %>% 
+  mutate(transplant = ifelse(CAN_REM_CD == 4, 1, 0)) %>%
+  mutate(policy = case_when(
+    tx_date <= pre_policy_end_date ~ paste0("Pre-Policy"),
+    tx_date >= post_policy_start_date ~  paste0("Post-policy"),
+    tx_date >= pre_policy_end_date & tx_date <= post_policy_start_date ~ paste0("in-between"))) %>% 
+  filter(policy != "in-between") %>% 
+	group_by(CAN_LISTING_CTR_ID,policy) %>% 
+  mutate(tot_tx = sum(transplant, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  mutate(tot_tx = replace_na(tot_tx,0))
+
+test <- init_list1 %>% 
+  select(CAN_LISTING_CTR_ID, policy,tot_tx) %>% 
+  distinct() %>% 
+  spread(key = policy, value = tot_tx)
+
+#number of low volume centers
+num_low_vol_centers <- num_all_centers - length(unique(init_list$CAN_LISTING_CTR_ID))
+
+```
+
+```{r}
+
 ```
 
