@@ -51,6 +51,10 @@ statjust_hr1b <- read_sas("statjust_hr1b.sas7bdat", NULL) %>%
 tx_hr <- read_sas("tx_hr.sas7bdat", NULL) %>%  
   zap_formats() %>% zap_labels()
 
+#transplant follow-up result
+txf_hr <- read_sas("txf_hr.sas7bdat", NULL) %>%  
+  zap_formats() %>% zap_labels()
+
 #center-level and opo-level predictors 
 institution <- read_sas("institution.sas7bdat", NULL) %>%  
   zap_formats() %>% zap_labels()
@@ -66,6 +70,8 @@ donor <- read_sas("donor_deceased.sas7bdat",NULL) %>%
 ```{r new justification}
 #justification for new statuses
 setwd("C:/Users/julia/SRP/S&D/Thoracic/ThoracicRegistration/Thoracic_Justs")
+
+##testtest
 
 #justification for new status 1
 statjust_hr1 <- read_sas("JustFormHRStat1.sas7bdat", NULL) %>%  
@@ -98,11 +104,14 @@ WlregAuditId_PxId <- read_sas("RiskStratDataHR.sas7bdat", NULL) %>%
 
 #JustFormHR
 JustFormHR <- read_sas("JustFormHR.sas7bdat")
+
+#column descriptions
+ColumnDescriptions <- read_sas("ColumnDescriptions.sas7bdat")
 ```
 
 # Select study sample
 
-## Define data ranges
+## 1. Define data ranges
 
 This section specifics the dates used in the study. The dates can be modified by changing the date in this chunk of code.
 
@@ -120,7 +129,7 @@ post_policy_start_date <- as.Date("2018-10-20")
 policy_switch_date <- as.Date("2018-10-18")
 ```
 
-## Filter initial listing
+## 2. Filter initial listing
 
 In this section, we select only adult, heart-only transplant recipients from sufficiently large transplant centers. The following exclusion criteria were applied:
 
@@ -208,7 +217,7 @@ n_centers <- init_list %>%
          Post = replace_na(Post,0)) %>% 
   nrow()
 
-#3308 transplants pre-policy, 3499 post-policy. Two individuals in the post-policy period had Status 1A. They will be dropped. 
+#3367 transplants pre-policy, 3581 post-policy. 
 num_tx_period <- init_list %>% 
   select(PX_ID, policy, tx_date, CAN_LAST_STAT) %>% 
   group_by(policy) %>% 
@@ -234,17 +243,23 @@ Next, we identified variables most likely to impact an organ recipient's post-tr
 11. Ventricular assist device
 
 Other explanatory variables under consideration include 
-12. functional status
-13. ABO blood type
-14. patient bmi
-14. treatment received by the recipient immediately before transplantation.
-15. educational background of the recipient
+
+12. Recipient functional status 
+13. Recipient and donor ABO blood type 
+14. Recipient bmi 
+15. Donor age, 
+16. Treatment received by the recipient immediately before transplantation 
+17. Recipient educational background
+18. CAN_CARDIAC_OUTPUT 
+19. REC_PCW_MEAN
+
+
 
 Additionally, we will identify the following outcome variables
 
-1. death within 1-year post-transplantation (all causes)
-2. re-transplantation within 1-year post-transplantation
-3. date of graft failure (fatal and non-fatal)
+1.  death within 1-year post-transplantation (all causes)
+2.  re-transplantation within 1-year post-transplantation
+3.  date of graft failure (fatal and non-fatal)
 
 ```{r identify variables}
 
@@ -255,8 +270,8 @@ init_list2 <- init_list %>%
          tx_date,
          status = CAN_LAST_STAT,
          center = REC_CTR_ID,
-         rec_age = REC_AGE_IN_MONTHS_AT_TX/12,
-         don_age = DON_AGE_IN_MONTHS/12,
+         rec_age = REC_AGE_IN_MONTHS_AT_TX,
+         don_age = DON_AGE_IN_MONTHS,
          rec_edu = CAN_EDUCATION,
          rec_bmi = REC_BMI,
          bilirubin = REC_TOT_BILI,
@@ -284,6 +299,21 @@ init_list2 <- init_list %>%
          death_date = TFL_DEATH_DT,
          ischemic_time = REC_HR_ISCH) %>% 
   mutate(
+    race_desc = case_when(
+      race == 2000 ~ "Hispanic/Latino",
+      race == 1024 ~ "Unknown",
+      race == 512 ~ "Indian Sub-continent",
+      race == 256 ~ "Arab or Middle Eastern",
+      race == 128 ~ "Native Hawaiian or Other Pacific Islander",
+      race == 64 ~ "Asian",
+      race == 32 ~ "American Indian or Alaska Native",
+      race == 16 ~ "Black or African American",
+      race == 8 ~ "White",
+      TRUE ~ "Multi-Racial"
+    ),
+    rec_age = rec_age/12,
+    don_age = don_age/12,
+    rec_age_60 = ifelse(rec_age >60, 1,0),
     graft_failed = ifelse(!is.na(gf_date),1,0),
          gf_1y = ifelse(!is.na(gf_date) & 
                           (as.Date(gf_date) - as.Date(tx_date) <365),
@@ -296,56 +326,544 @@ init_list2 <- init_list %>%
          retx = ifelse(last_stat == "R",1,0)
   )
 
-#sanity check 1: number of people who had graft failure by policy period
+#sanity check 1: 160 pre-policy vs 110 post-policy recipients had graft failure post transplant
 View(init_list2 %>% 
   group_by(policy,graft_failed) %>% 
   count() %>% 
   filter(graft_failed ==1))
 
-#sanity check 2: number of recipients died of graft failure
+#sanity check 2: 118 pre-policy vs 72 post-policy recipients died of graft failure
 View(init_list2 %>% 
        filter(graft_failed ==1 & dead == 1 & gf_date == death_date) %>% 
        group_by(policy) %>% 
        count())
 
-#sanity check 3: number of recipients dying within the 1st year due to all causes
+#sanity check 3: 283 pre-policy vs 308 post-policy recipients died within the 1st year due to all causes
 View(init_list2 %>% 
        filter(dead_1y == 1) %>% 
        group_by(policy) %>% 
        count())
-#sanity check 4: when does graft failure happen
+
+#sanity check 4: average # of days between date of transplantation and date of graft failure: 367 pre-policy vs 142 post-policy
 View(init_list2 %>% 
        filter(graft_failed ==1) %>% 
        mutate(gf_duration = as.Date(gf_date) - as.Date(tx_date)) %>% 
-       select(policy,gf_duration))
+       group_by(policy) %>% 
+       summarise(mean = mean(gf_duration)))
 
-#sanity check 5: how many people got re-transplanted after graft failure
+#sanity check 5: 8 pre-policy vs 13 post-policy recipients got re-transplanted after graft failure
 View(init_list2 %>% 
        filter(graft_failed ==1 & last_stat == "R") %>% 
        group_by(policy) %>% 
        count())
 
-#average ischemic time is significantly longer after policy change 
+#sanity check 6: average ischemic time is significantly longer after policy change 
 ggboxplot(init_list2, x = "policy", y = "ischemic_time", 
           color = "policy", palette = c("#00AFBB", "#E7B800"),
         ylab = "ischemic time", xlab = "policy period")
 
 t.test(ischemic_time ~ policy, data = init_list2, var.equal = TRUE)
 
-#transplant outcome  by policy period
+#sanity check 7: 8 pre-policy vs 13 post-policy re-transplant 
 
-ggplot(init_list2, aes(last_stat,n, fill=policy)) +
-  geom_bar(stat = "identity", position = 'dodge')
-
-## 495 total dead in post-policy vs 376 in pre-policy, 
-##13 re-transplant in post-policy period vs 8 in pre-policy
+test1 <- init_list2 %>% 
+  select(policy, dead_1y) %>% 
+  filter(dead_1y != 0) %>% 
+  group_by(policy,dead_1y) %>% 
+  count() %>% 
+  ungroup()
+View(test1)
 
 test2 <- init_list2 %>% 
   select(policy,last_stat) %>% 
   group_by(policy,last_stat) %>% 
   count() %>% 
+  ungroup() 
 
+test2$policy <- factor(test2$policy, levels = c("Pre","Post"))
+
+
+ggplot(test2, aes(last_stat,n, fill=policy)) +
+  geom_bar(stat = "identity", position = 'dodge') +
+  scale_x_discrete(labels=c("A" = "Alive", 
+                            "D" = "Dead",
+                            "L" = "Lost to FU",
+                            "R" = "Retransplant",
+                            "N" = "Not seen"
+                            ))
 
 ```
 
 ## Find recipient treatment at the time of transplantation
+
+First, we will find the treatment each pre-policy candidate received at the time of transplant.
+
+
+```{r stat_1a}
+## Status 1A -> Status 1-4
+#select pre-policy listings
+status_1a <- init_list2 %>% 
+  filter(policy == "Pre" & status == 2010)
+
+just_1a <- statjust_hr1a %>%
+  filter(PX_ID %in% status_1a$PX_ID) %>% 
+  group_by(PX_ID) %>% 
+  mutate(chg_dt_seq = dense_rank(CANHX_CHG_DT)) %>% 
+  filter(chg_dt_seq == max(chg_dt_seq)) %>% 
+  ungroup() 
+  
+
+#remove redundant or erroneous justifications
+just_1a <- distinct(just_1a) %>%
+  filter(CANHX_FORM_STAT == 4 | CANHX_FORM_STAT == 8) %>%
+  distinct(PX_ID, CANHX_CHG_DT, .keep_all = TRUE)
+
+#select key variables
+just_1a <- just_1a %>% 
+  dplyr::select(PX_ID, 
+         CAN_LISTING_CTR_ID, CANHX_CHG_DT,
+    CANHX_STAT_TY, 
+    CANHX_FORM_STAT, 
+    CANHX_DIALYSIS, 
+    CANHX_LAB_SERUM_CREAT, 
+    CANHX_ADULT_CRITERIA_A, 
+    CANHX_ADULT_CRITERIA_B, 
+    CANHX_ADULT_CRITERIA_C, 
+    CANHX_ADULT_CRITERIA_D, 
+    CANHX_ADULT_CRITERIA_E, 
+    CANHX_INTRP_DOBU, 
+    CANHX_INTRP_DOPA, 
+    CANHX_INTRP_MILRIN,
+    CANHX_ADMITTED, 
+    CANHX_IABP, 
+    CANHX_ECMO, 
+    CANHX_LVAD_TYPE, 
+    CANHX_VAD, 
+    CANHX_TAH, 
+    CANHX_RVAD_TYPE,
+    CANHX_LAB_BILI, 
+    CANHX_HEMO_SBP, 
+    CANHX_CARD_OUTPUT, 
+    CANHX_HEMO_CI, 
+    CANHX_HEMO_INTRP_OBTAINED, 
+    CANHX_HEMO_BSA,
+    CANHX_HEMO_PCWP,
+    CANHX_HEMO_MPAP,
+    CANHX_DEV_MALFUNCTN,
+    CANHX_DEV_VENT_ARRYTHM, 
+    CANHX_PHYS_HR_RHYTH,
+    CANHX_DEV_INFECT
+    ) %>% 
+  left_join(cand_thor %>% 
+              dplyr::select(PX_ID, 
+                     CAN_PCW_MEAN, 
+                     CAN_HGT_CM, 
+                     CAN_WGT_KG, 
+                     CAN_CARDIAC_OUTPUT, 
+                     CAN_CARDIAC_OUTPUT_MEDS
+                     ))
+#adding back select cand_thor hemodynamics
+#durable LVAD list for elective 1A time
+#lvad_list <- c(205, 206, 208, 210, 216, 217, 223, 224, 230, 231, 232, 233)
+durable_list <- c(205, 206, 208, 210, 216, 217, 223, 224, 230, 231, 232, 233, 
+                  305, 306, 313, 316, 319, 325, 402)
+#non dischargable VADs
+non_discharge <- c(201, 203, 204, 209, 215, 218, 221, 222, 225, 226, 227, 228, 
+                   234, 301, 302, 303, 309, 310, 311, 320, 321)
+
+just_1a <- just_1a %>% 
+  mutate(status = "Status 1A",
+         stat_just = case_when(
+            CANHX_ADULT_CRITERIA_A ==1~ "Status 1A (MCS for shock)",
+            CANHX_ADULT_CRITERIA_B == 1 ~ "Status 1A (MCS complication)",
+            CANHX_ADULT_CRITERIA_C == 1 ~ "Status 1A (Mechanical ventilation)",
+            CANHX_ADULT_CRITERIA_D == 1 ~ "Status 1A (High dose inotropes)",
+            CANHX_ADULT_CRITERIA_E == 1 ~ "Status 1A (Exception)"),
+    ino_ci = as.numeric(CANHX_HEMO_CI),
+    ino_pcwp = as.numeric(CANHX_HEMO_PCWP),
+    n_inos = ifelse(is.na(CANHX_INTRP_DOPA)==FALSE, 1, 0) + 
+      ifelse(is.na(CANHX_INTRP_DOBU)==FALSE, 1, 0) + 
+      ifelse(is.na(CANHX_INTRP_MILRIN)==FALSE, 1, 0),
+    n_inos = ifelse(status != 2010, NA, n_inos),
+    multi_ino = ifelse(n_inos > 1, 1, 0),
+    single_ino = ifelse(n_inos ==1, 1, 0),
+    low_d_ino = ifelse(n_inos> 1 & 
+               (CANHX_INTRP_DOPA<3 | CANHX_INTRP_MILRIN <0.25 | CANHX_INTRP_DOBU < 3), 1, 0),
+    low_s_ino = ifelse(n_inos ==1 & (CANHX_INTRP_MILRIN <0.5 | CANHX_INTRP_DOBU < 7.5),1,0),
+    bsa = 0.007184*(CAN_HGT_CM)^(0.725)*CAN_WGT_KG^(0.425),
+    tcr_ci = CAN_CARDIAC_OUTPUT/bsa,
+    iabp_no_shock = case_when(
+      tcr_ci > 1.8 & CAN_CARDIAC_OUTPUT_MEDS == "N" & (CANHX_IABP==1) ~ 1,
+      tcr_ci > 2.0 & (CANHX_IABP==1) ~ 1,
+      CAN_PCW_MEAN < 15 & CANHX_IABP ==1 ~ 1,
+      is.na(tcr_ci) == FALSE & (CANHX_IABP==1) ~ 0),
+    dopa_dose = CANHX_INTRP_DOPA,
+    dobu_dose = CANHX_INTRP_DOBU,
+    milrin_dose = CANHX_INTRP_MILRIN,
+    overtreat = case_when(
+      ##Note absence of SBP requirement- patients were on inotropes
+        iabp_no_shock == 1 ~ 1,
+        CANHX_HEMO_PCWP < 15 & CANHX_ADULT_CRITERIA_D ==1 ~ 1,
+        ino_ci>2.2~ 1,
+        ino_pcwp <15 ~ 1,
+        (ino_ci>1.8 & CANHX_HEMO_INTRP_OBTAINED =="N") ~ 1,
+        low_d_ino == 1 | low_s_ino == 1 ~ 1, 
+        ino_ci <= 1.8 ~ 0,
+        (ino_ci <= 2.2 & CANHX_HEMO_INTRP_OBTAINED =="Y") ~ 0,
+        TRUE ~ 0),
+    elective_1A = case_when(
+      CANHX_ADULT_CRITERIA_A ==1 & CANHX_IABP ==0 & CANHX_ECMO ==0 & CANHX_LVAD_TYPE %in% durable_list ~1,
+      TRUE ~ 0),
+    Justification = case_when(
+      CANHX_ADULT_CRITERIA_E ==1  ~ "Status 3- Exception",
+      CANHX_ADULT_CRITERIA_C == 1 ~ "Status 3- Vent",
+      CANHX_DEV_VENT_ARRYTHM == 1 & CANHX_ADULT_CRITERIA_B ==1 ~ "Status 1-MSCD with Life Threatening Arrhythmia",
+    CANHX_ECMO == 1 ~ "Status 1-VA ECMO",
+    CANHX_ADULT_CRITERIA_A ==1 & CANHX_VAD == 1 & is.na(CANHX_RVAD_TYPE)== FALSE & (CANHX_LVAD_TYPE %in% non_discharge)~ "Status 1-Non-Dischargeable BiVAD",
+    CANHX_VAD == 1 & CANHX_LVAD_TYPE %in% non_discharge ~ "Status 2-Non-Dischargeable LVAD",
+    CANHX_DEV_MALFUNCTN == 1 ~ "Status 2-MSCD Device with Malfunction",
+    CANHX_ADULT_CRITERIA_A ==1 & CANHX_IABP ==0 & elective_1A==0  ~ "Status 2-Other MSCD",
+    CANHX_IABP ==1 & overtreat == 0 ~ "Status 2-Intra Aortic Balloon Pump",
+    CANHX_PHYS_HR_RHYTH == 7 ~ "Status 2-Ventricular Tachycardia (VT)",
+    CANHX_PHYS_HR_RHYTH == 8 ~ "Status 2-Ventricular Fibrillation (VF)",
+    CANHX_ADULT_CRITERIA_B == 1 ~ "Status 3-MSCD Complication",
+    elective_1A == 1 ~ "Status 3-Dischargeable LVAD on elective time",
+    overtreat == 0 ~ "Status 3-Multiple inotropes or a single high dose inotrope and hemodynamic monitoring",
+    overtreat == 1 & CANHX_IABP == 1~ "Status 3-IABP Downgraded Due to Cardiogenic Shock Requirement",
+    overtreat == 1 & CANHX_ECMO == 1~ "Status 3- Downgraded Due to Cardiogenic Shock Requirement",
+    overtreat == 1 ~ "Status 4-Inotropes Downgraded Due to Cardiogenic Shock Requirement"
+))
+
+just_1a <- just_1a %>%
+  mutate(six_status = case_when(
+    grepl("Status 1", Justification) ~ "Status 1",
+    grepl("Status 2", Justification) ~ "Status 2",
+    grepl("Status 3", Justification) ~ "Status 3",
+    grepl("Status 4", Justification) ~ "Status 4"
+    ))
+
+just_1a <- just_1a %>%
+  mutate(treatment = case_when(
+    stat_just == "Status 1A (Exception)" | stat_just == "Status 1A (Mechanical ventilation)" ~ "Exception",
+    Justification %in% c("Status 1-MSCD with Life Threatening Arrhythmia",
+                         "Status 2-MSCD Device with Malfunction",
+                         "Status 3-Dischargeable LVAD on elective time",
+                         "Status 3-MSCD Complication") ~ "LVAD",
+    Justification %in% c("Status 1-Non-Dischargeable BiVAD",
+                         "Status 2-Non-Dischargeable LVAD",
+                         "Status 2-Other MSCD")~"Other MCS",
+    Justification == "Status 1-VA ECMO"~"ECMO",
+    Justification %in% c("Status 2-Intra Aortic Balloon Pump",
+                         "Status 3-IABP Downgraded Due to Cardiogenic Shock Requirement")~"IABP",
+    Justification %in% c("Status 2-Ventricular Tachycardia (VT)",
+                         "Status 2-Ventricular Fibrillation (VF)")~ "Exception",
+    Justification == "Status 3-Multiple inotropes or a single high dose inotrope and hemodynamic monitoring"~"High-dose Inotropes",
+    Justification == "Status 3- Exception" ~ "Exception",
+    Justification == "Status 4-Inotropes Downgraded Due to Cardiogenic Shock Requirement"~"High-dose Inotropes")) %>%
+  dplyr::select(PX_ID, 
+         status, 
+         CANHX_CHG_DT, 
+         six_status, 
+         Justification, 
+         treatment, 
+         CANHX_HEMO_SBP, 
+         CANHX_HEMO_CI, 
+         CANHX_HEMO_PCWP, 
+         CANHX_HEMO_INTRP_OBTAINED) %>%
+  group_by(PX_ID) %>% 
+  arrange(PX_ID, CANHX_CHG_DT) %>%
+  filter(row_number() ==1)
+just_1a %>% group_by(treatment) %>% count(Justification)
+```
+
+```{r stat_1b}
+status_1b <- init_list2 %>% 
+  filter(policy == "Pre" & status == 2020)
+
+just_1b <- statjust_hr1b %>% 
+  filter(PX_ID %in% status_1b$PX_ID) %>%
+  group_by(PX_ID) %>% 
+  mutate(chg_dt_seq = dense_rank(CANHX_CHG_DT)) %>% 
+  filter(chg_dt_seq == max(chg_dt_seq)) %>% 
+  left_join(cand_thor %>% dplyr::select(PX_ID, CAN_DGN, CAN_PCW_MEAN, CAN_HGT_CM, CAN_WGT_KG, CAN_CARDIAC_OUTPUT)) #adding back select cand_thor hemodynamics and diagnosis codes
+  
+
+#remove redundant or erroneous justifications
+just_1b <- distinct(just_1b) %>%
+  filter(CANHX_FORM_STAT == 4 | CANHX_FORM_STAT == 8) %>%
+  distinct(PX_ID, CANHX_CHG_DT, .keep_all = TRUE)
+
+#restrictive, amyloid, CHD, and HCOM, cardiomyopathy diagnoses to upgrade old Status 2 candidates
+stat4_diagnoses <- c(1050, 1051, 1052, 1053, 1054, 1099, 1100, 1101, 1102, 
+                     1103, 1104, 1105, 1106, 1199, 1200, 1201, 1203, 1205, 1206, 1207, 1208)
+
+#simple recode for Status 1B...
+just_1b <- just_1b %>%
+  mutate(
+    bsa = 0.007184*(CAN_HGT_CM)^(0.725)*CAN_WGT_KG^(0.425),
+    tcr_ci = CAN_CARDIAC_OUTPUT/bsa,
+    Justification = case_when(
+      CANHX_VAD == 1 ~"Status 4-Dischargeable LVAD without discretionary 30 days",
+      tcr_ci >= 2.2 & CANHX_CONT_IV_INOTROP == 1 ~ "Status 6-Low dose inotropes but cardiac index too high",
+      CAN_PCW_MEAN <= 15 & CANHX_CONT_IV_INOTROP == 1~ "Status 6-Low dose inotropes but wedge too low",
+      CANHX_CONT_IV_INOTROP == 1 ~ "Status 4-Inotropes without Hemodynamic Monitoring",
+      CAN_DGN %in% stat4_diagnoses ~ "Status 4-Medical diagnoses that qualify for status 4",
+    TRUE ~ "Status 4-Exception"))
+
+just_1b <- just_1b %>%
+ mutate(status = "Status 1B",
+        treatment = case_when(
+   Justification %in% c("Status 4-Inotropes without Hemodynamic Monitoring", "Status 6-Low dose inotropes but cardiac index too high", "Status 6-Low dose inotropes but wedge too low") ~"Low-dose Inotropes",
+   Justification == "Status 4-Dischargeable LVAD without discretionary 30 days"~"LVAD",
+   Justification == "Status 4-Medical diagnoses that qualify for status 4" ~ "None",
+   Justification ==  "Status 4-Exception" ~ "Exception")) %>%
+  select(PX_ID, status, CANHX_CHG_DT, Justification, treatment, tcr_ci) %>%
+  group_by(PX_ID) %>% 
+  arrange(PX_ID, CANHX_CHG_DT) %>%
+  filter(row_number() ==1)
+
+just_1b <- just_1b %>%
+  mutate(six_status = case_when(
+    grepl("Status 6", Justification) ~ "Status 6",
+    grepl("Status 4", Justification) ~ "Status 4"
+    ))
+
+#sanity checks:
+just_1b %>% group_by(treatment) %>% count(Justification)
+
+just_1b %>% 
+  group_by(Justification) %>%
+  summarise(min_CI = min(tcr_ci, na.rm = TRUE))
+```
+
+## Combine status 1A and 1B justification data with initial listings from `cand_thor`, code old Status 2 -\> Status 5/6
+
+```{r combine_data_sets}
+#restrictive, amyloid, CHD, and HCOM, cardiomyopathy diagnoses to upgrade old Status 2 candidates
+stat4_diagnoses <- c(1050, 1051, 1052, 1053, 1054, 1099, 1100, 1101, 1102, 
+                     1103, 1104, 1105, 1106, 1199, 1200, 1201, 1203, 1205, 1206, 1207, 1208)
+
+just_1a_1b <- bind_rows(just_1a, just_1b)
+
+just_1a_1b <- just_1a_1b %>% 
+  rename(Status = status)
+
+multi_recips <- tx_hr %>% 
+  filter(REC_TX_TY == 2 | REC_TX_TY ==4) %>% select(PX_ID,REC_TX_DT)
+
+old_policy_lists <- init_list2 %>%
+  filter(policy == "Pre" & status < 2100) %>%
+  left_join(just_1a_1b , by = c("PX_ID")) %>%
+  mutate(
+    Justification = case_when(
+      status == 2030 & diagnosis %in% stat4_diagnoses ~ "Status 4-Medical diagnoses that qualify for status 4",
+    status == 2030 ~ "Status 6-Adult Candidates Suitable for Transplant",
+    TRUE ~ Justification
+    ),
+    treatment = ifelse(status ==2030, "None", treatment),
+    six_status = case_when(
+      status ==2030 & diagnosis %in% stat4_diagnoses ~"Status 4", 
+      status ==2030 & PX_ID %in% multi_recips$PX_ID ~ "Status 5",
+      status ==2030 ~ "Status 6",
+      TRUE ~ six_status
+      )) %>% 
+  mutate(Status = ifelse(status == 2030, "Status 2", Status)) %>% 
+  select(-status) %>% 
+  rename(status = Status) %>% 
+  select(PX_ID,status, six_status, treatment,Justification, contains("CANHX"))
+  
+old_policy_lists %>% group_by(status) %>% count(treatment)
+
+old_policy_lists %>%  group_by(status) %>% count()
+```
+
+Next, we will find the treatment each post-policy candidate received at the time of transplant.
+
+```{r identify post_policy candidates}
+post_policy <- init_list2 %>%
+  filter(policy == "Post") %>%
+  select(PX_ID, 
+         tx_date, 
+         status)
+
+status_ep_with_PX_ID <- StatusJustEpisode %>%
+  left_join(JustFormHRDataLink %>% select(WlregAuditId, JustId), by = "JustId") %>%
+  left_join(WlregAuditId_PxId, by = "WlregAuditId") %>%
+  filter(PX_ID %in% post_policy$PX_ID) %>%
+  left_join(JustFormHR %>% select(JustId, status = RequestedCandStatCd, Exception)) %>%
+  select(PX_ID, JustId, status, Exception, ChangeDate) 
+
+
+post_policy1 <- post_policy %>% 
+  left_join(status_ep_with_PX_ID %>% select(-status), by = c("PX_ID")) %>% 
+  group_by(PX_ID) %>% 
+  mutate(just_sequence = dense_rank(ChangeDate)) %>%
+  filter(just_sequence == max(just_sequence)) %>% 
+  filter(JustId == max(JustId)) %>% 
+  ungroup() 
+
+#for every patient, 1) find the latest change date, 2) if there are duplicates, query all JustId, usually only one of them should be filled
+
+```
+
+## Status 1 form cleaning
+```{r status_1}
+post_policy_status1 <- post_policy1 %>% 
+  filter(status == 2110) %>% 
+  pull(JustId)
+# select only justifications that appear in first_ep
+#coding life-threatening arrythmia as an "exception"
+
+#there should be 311 people transplanted at Status 1
+status_1 <- statjust_hr1 %>%
+  filter(JustId %in% post_policy_status1) %>%  
+  left_join(post_policy1 %>% 
+              select(PX_ID, JustId, status, Exception), by = "JustId") %>% 
+  mutate(
+    treatment = case_when(
+      CriteriaEcmoSupport == TRUE ~ "ECMO",
+      CriteriaBivadSupport == TRUE ~ "Other MCS",
+      CriteriaMcsdSupport == TRUE | Exception == TRUE ~ "Exception" 
+    )
+  ) %>% select(PX_ID, JustId, treatment, status, Exception, EcmoCardiacIndex, CardiacIndexInotropeSupport, EcmoCapWedgePressure, EcmoWithoutHemo)
+status_1 %>% count(treatment)
+
+```
+
+## Status 2 form cleaning
+```{r status_2}
+#only true durable dischargable LVAD crtieria for Status 2 is malfunction
+#labelling VT/VF as an exception
+post_policy_status2 <- post_policy1 %>% 
+  filter(status == 2120) %>% 
+  pull(JustId)
+
+status_2 <- statjust_hr2 %>%
+  filter(JustId %in% post_policy_status2) %>%  
+  left_join(post_policy1 %>% 
+              select(PX_ID, JustId, status, Exception), by = "JustId") %>%
+  mutate(
+    treatment = case_when(
+      CriteriaIabpSupport == TRUE ~ "IABP",
+      CriteriaMcsdMalfunction == TRUE ~ "LVAD", 
+      CriteriaDurableDevSupport == TRUE |  CriteriaMcsdEndovasSupp == TRUE | CriteriaLvadSupport == TRUE ~ "Other MCS",
+      CriteriaVentEpisode == TRUE ~ "Exception", 
+      Exception == TRUE ~ "Exception"
+    )
+  ) %>% select(PX_ID,JustId, treatment, status, IabpCardiacIndex, IabpCapWedgePressure, IabpWithHemo, IabpWithoutHemo, IabpCardiacIndexInotropeSup)
+status_2 %>% count(treatment)
+status_2 %>% count()
+```
+
+
+## Status 3 form cleaning
+
+### Variables needed for the hemodynamic graphs from high dose inotrope candidates selected
+
+```{r status_3}
+post_policy_status3 <- post_policy1 %>% 
+  filter(status == 2130) %>% 
+  pull(JustId)
+
+status_3 <- statjust_hr3 %>%
+  filter(JustId %in% post_policy_status3) %>%
+  left_join(post_policy1 %>% 
+              select(PX_ID, JustId, status, Exception), by = "JustId") %>%
+  mutate(
+    treatment = case_when(
+      CriteriaPercuSupport == TRUE ~ "Other MCS",
+      CriteriaLvadDiscSupport == TRUE | CriteriaMcsdWithHemo == TRUE | CriteriaMcsdWithPump == TRUE | CriteriaMcsdWithRhf == TRUE ~ "LVAD",
+      CriteriaMcsdInfection == TRUE | CriteriaMcsdMucosalBleed == TRUE |  CriteriaMcsdWithAI == TRUE | CriteriaLvadSupport == TRUE ~ "LVAD",
+      CriteriaInotropeSupport == TRUE ~ "High-dose Inotropes",
+      CriteriaVaEcmoSupport == TRUE ~ "ECMO",
+      CriteriaIabpSupport == TRUE ~ "IABP",
+      Exception == TRUE ~ "Exception"
+    )
+  ) %>% select(PX_ID,JustId, treatment, status, InoSysBloodPressure, InoCardiacIndex, InoCapWedgePressure, InoInotropeSupport)
+status_3 %>% count(treatment)
+status_3 %>% count()
+```
+
+
+## Status 4 form cleaning
+
+```{r status_4}
+post_policy_status4 <- post_policy1 %>% 
+  filter(status == 2140) %>% 
+  pull(JustId)
+
+status_4 <- statjust_hr4 %>%
+  filter(JustId %in% post_policy_status4) %>%
+  left_join(post_policy1 %>% 
+              select(PX_ID, JustId, status, Exception), by = "JustId") %>%
+  mutate(
+    treatment = case_when(
+      CriteriaLvadSupport == TRUE ~ "LVAD",
+      CriteriaInotropeSupport == TRUE ~ "Low-dose Inotropes",
+      CriteriaHeartDisease == TRUE | CriteriaIschemicHeart == TRUE | CriteriaCardiomyopathy == TRUE | CriteriaRetransplant == TRUE ~ "None",
+      Exception == TRUE ~ "Exception"
+    )
+  ) %>% select(PX_ID,JustId, treatment, status, InotropeCardiacIndex, InotropePcwp)
+status_4 %>% count(treatment)
+status_4 %>% count()
+```
+
+## Status 5-6 coding
+```{r status_5_6}
+post_policy_status56 <- post_policy1 %>% 
+  filter(status == 2150 | status == 2160) %>% 
+  pull(JustId)
+
+
+status_5_6 <- post_policy1 %>%
+  filter(status %in% c(2150, 2160, 1150, 1160)) %>%
+  mutate(treatment = "None" ) %>%
+  select(PX_ID,JustId, treatment, status)
+
+
+status_5_6 %>% count()
+```
+
+## Combine and create full post dataset
+
+```{r post-dataset, warning = FALSE, message= FALSE}
+init_list2 <- init_list2 %>% 
+    mutate(PX_ID = ifelse(is.na(PX_ID)==FALSE,as.integer(PX_ID),PX_ID))
+
+post_justifications <- bind_rows(status_1, status_2, status_3, status_4, status_5_6) %>%
+  mutate(status = case_when(
+           status %in% c(1110, 2110) ~ "Status 1",
+           status %in% c(1120, 2120) ~ "Status 2",
+           status %in% c(1130, 2130) ~ "Status 3",
+           status %in% c(1140, 2140) ~ "Status 4",
+           status %in% c(1150, 2150) ~ "Status 5",
+           status %in% c(1160, 2160) ~ "Status 6"
+         ),
+         six_status = status) 
+
+post_justifications %>% group_by(status) %>% count(treatment)
+post_justifications %>% group_by(status)
+```
+
+
+# Final Sample - Without Transplant Center Characteristics
+
+This dataframe contains all transplants matched with their variables used for the analysis.
+
+```{r create_final_sample}
+#put together pre and post policy information contained in old_policy_lists and post_justifications respectively
+
+
+final_sample <- bind_rows(old_policy_lists, 
+                          post_justifications %>% select(PX_ID, 
+                                                         status, 
+                                                         treatment,
+                                                         six_status
+                                                         )) %>% 
+  select(PX_ID, status, treatment, six_status) %>%
+  left_join(init_list2 %>% select(-status), by = "PX_ID") 
+final_sample %>% filter(list_date > as.Date("2019-01-08") & treatment == "Low-dose Inotropes")
+
+#people who with contradictory IABP record
+
+```
