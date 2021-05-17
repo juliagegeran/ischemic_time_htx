@@ -239,7 +239,7 @@ Next, we identified variables most likely to impact an organ recipient's post-tr
 7.  Intra-aortic balloon pump
 8.  Mechanical ventilation pre-transplant
 9.  Race
-10. Temporary circulatory support
+10. Temporary circulatory support (ECMO, VAD)
 11. Ventricular assist device
 
 Other explanatory variables under consideration include 
@@ -281,6 +281,14 @@ init_list2 <- init_list %>%
          infection = REC_INFECT_IV_DRUG,
          iabp = REC_IABP,
          vent = REC_VENTILATOR,
+         no_inhaled = REC_INHALED_NO,
+         inotrope = REC_INOTROP,
+         pge = REC_PGE,
+         life_support = REC_LIFE_SUPPORT,
+         other_life_support = REC_LIFE_SUPPORT_OTHER,
+         defib = REC_IMPLANT_DEFIB,
+         infection_iv = REC_INFECT_IV_DRUG,
+         life_support_type = REC_LIFE_SUPPORT_TY,
          vent_event = REC_VENTILATOR_SUPPORT,
          vent_timeframe = REC_VENTILATOR_TIMEFRAME,
          race = CAN_RACE,
@@ -862,8 +870,101 @@ final_sample <- bind_rows(old_policy_lists,
                                                          )) %>% 
   select(PX_ID, status, treatment, six_status) %>%
   left_join(init_list2 %>% select(-status), by = "PX_ID") 
-final_sample %>% filter(list_date > as.Date("2019-01-08") & treatment == "Low-dose Inotropes")
 
-#people who with contradictory IABP record
+#fix coding names
 
+final_sample <- final_sample %>% 
+  mutate(vad = case_when(
+    vad == 1 ~ "None",
+    vad == 2 ~ "LVAD",
+    vad == 3 ~ "RVAD", 
+    vad == 4 ~ "TAH", 
+    vad == 5 ~ "LVAD+RVAD",
+    vad == 6 ~ "Unspecified"
+  ))
+
+final_sample %>% filter(tx_date > as.Date("2019-01-08") & treatment == "Low-dose Inotropes")
+
+final_sample %>% group_by(policy) %>% count(treatment)
+
+
+
+#people with contradictory IABP record - n = 103
+problem_iabp <- final_sample %>% 
+  filter(treatment == "IABP" & iabp == "0") %>% 
+  select(PX_ID, status, treatment, policy, life_support, life_support_type, vad, ecmo, no_inhaled,pge,inotrope)
+
+#people with contradictory VAD record - n = 8
+problem_vad <- final_sample %>% 
+  filter(treatment == "LVAD" & vad == "None") %>% 
+  select(PX_ID, status, treatment, policy, life_support, life_support_type, iabp, ecmo)
+
+#people with contradictory ECMO record - n=9
+problem_ecmo <- final_sample %>% 
+  filter(treatment == "ECMO" & ecmo == "0") %>% 
+  select(PX_ID, status, treatment, ecmo, policy, life_support, life_support_type, iabp, vad)
+
+#can we further code vad into older generation, newer generation, or heart mate 2?
 ```
+
+## Basic sanity check
+
+1. Refine final sample to exclude people missing ischemic time
+```{r exclude missing ischemic time}
+final_sample1 <- final_sample %>% 
+  filter(!is.na(ischemic_time)) 
+
+n_missing_ischemic <- count(final_sample) - count(final_sample1)
+#excluded 39 individuals for missing ischemic time
+#total n= 6736
+
+sample_size<- final_sample1 %>% group_by(policy, six_status) %>% count()
+```
+
+1. Calculate mean ischemic time by status tier, treatment, and policy period
+```{r ischemic time by status tier}
+#by status
+ischemic_by_status <- final_sample %>% #n = 6,737
+  filter(!is.na(ischemic_time)) %>% 
+  group_by(policy, six_status) %>% 
+  summarize(avg=mean(ischemic_time), 
+            sd=sd(ischemic_time),
+            n=n(), 
+            se=sd/sqrt(n)          
+)
+
+View(ischemic_by_status)
+ggplot(ischemic_by_status, aes(x=six_status, y=avg, group=policy, color=policy)) + 
+  geom_pointrange(aes(ymin= avg-sd, ymax=avg+sd))
+
+#by treatment
+ischemic_by_treatment <- final_sample %>% #n = 6,737
+  filter(!is.na(ischemic_time)) %>% 
+  group_by(policy, treatment) %>% 
+  summarize(avg=mean(ischemic_time), 
+            sd=sd(ischemic_time),
+            n=n(), 
+            se=sd/sqrt(n)          
+)
+View(ischemic_by_treatment)
+ggplot(ischemic_by_treatment, aes(x=treatment, y=avg, group=policy, color=policy)) + 
+  geom_pointrange(aes(ymin= avg-sd, ymax=avg+sd))
+
+
+#by policy
+ischemic_by_policy <- final_sample %>% #n = 6,737
+  filter(!is.na(ischemic_time)) %>% 
+  group_by(policy) %>% 
+  summarize(avg=mean(ischemic_time), 
+            sd=sd(ischemic_time),
+            n=n(), 
+            se=sd/sqrt(n)          
+)
+View(ischemic_by_policy)
+ggplot(ischemic_by_policy, aes(x=policy, y=avg)) + 
+  geom_pointrange(aes(ymin= avg-sd, ymax=avg+sd))
+
+t.test(ischemic_time ~ policy, data = final_sample1, var.equal = TRUE)
+```
+
+3. calculate survival time for each person
