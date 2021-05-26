@@ -1,0 +1,28 @@
+---
+title: Tidyverse Practice
+author: "Julia (Gege) Ran, William Parker"
+output:
+  rmdformats::material:
+    highlight: tango
+  html_document:
+    theme: cosmo
+    toc: yes
+---
+
+This is a R markdown file to help you get familiar with tidyverse using heart transplant data. By the end of this meeting, you should be able to:
+
+1. Use the following commands to wrangle a dataset
+- import data
+- create tables
+- filter
+- select
+- mutate
+- join datasets
+- generate basic summary data
+- generate basic summary graphs
+- export dataset
+- compute some stuff
+
+2. Use ggplot to plot some cool things 
+
+3.

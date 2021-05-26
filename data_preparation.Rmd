@@ -887,6 +887,23 @@ final_sample %>% filter(tx_date > as.Date("2019-01-08") & treatment == "Low-dose
 
 final_sample %>% group_by(policy) %>% count(treatment)
 
+```
+
+## Basic sanity check
+
+1. Refine final sample to exclude people missing ischemic time
+```{r exclude missing ischemic time}
+final_sample1 <- final_sample %>% 
+  filter(!is.na(ischemic_time)) %>% 
+  mutate(rec_age_60 = ifelse(rec_age <=60, 0,1),
+         don_age_60 = ifelse(don_age <=60, 0,1),
+         ischemic_time_4h = ifelse(ischemic_time/60 <=4, 0,1))
+
+View(final_sample1 %>% group_by(policy,ischemic_time_4h) %>% count())
+View(final_sample1 %>% group_by(policy, center) %>% count())
+n_missing_ischemic <- count(final_sample) - count(final_sample1)
+#excluded 39 individuals for missing ischemic time
+#total n= 6736
 
 
 #people with contradictory IABP record - n = 103
@@ -905,22 +922,99 @@ problem_ecmo <- final_sample %>%
   select(PX_ID, status, treatment, ecmo, policy, life_support, life_support_type, iabp, vad)
 
 #can we further code vad into older generation, newer generation, or heart mate 2?
-```
-
-## Basic sanity check
-
-1. Refine final sample to exclude people missing ischemic time
-```{r exclude missing ischemic time}
-final_sample1 <- final_sample %>% 
-  filter(!is.na(ischemic_time)) 
-
-n_missing_ischemic <- count(final_sample) - count(final_sample1)
-#excluded 39 individuals for missing ischemic time
-#total n= 6736
 
 sample_size<- final_sample1 %>% group_by(policy, six_status) %>% count()
+
+final_sample2<- final_sample1 %>% 
+  select(-rec_edu, diagnosis) %>% 
+  left_join(cand_thor %>% select(PX_ID, CAN_DGN, CAN_DIAB_TY, CAN_MOST_RECENT_CREAT, CAN_FUNCTN_STAT,CAN_PCW_MEAN,CAN_HGT_CM,CAN_WGT_KG,CAN_CARDIAC_OUTPUT,CAN_PRIMARY_PAY,CAN_HIST_CIGARETTE,CAN_WORK_INCOME,CAN_EDUCATION,CAN_PRIMARY_PAY, CAN_REM_DT, CAN_REM_CD,PERS_OPTN_DEATH_DT,PERS_SSA_DEATH_DT), by = "PX_ID") %>%
+  mutate(
+        simple_diagnosis = case_when(
+          CAN_DGN == 1000 | CAN_DGN == 1050 ~ "Idiopathic",
+          CAN_DGN == 1007 ~ "Ischemic",
+          CAN_DGN == 1203 | CAN_DGN == 1205 | CAN_DGN == 1207 ~ "Congenital",
+          TRUE ~ "Other"),
+        "Diagnosis" = factor(simple_diagnosis, 
+                           levels = c("Idiopathic cardiomyopathy", 
+                                      "Ischemic cardiomyopathy", 
+                                      "Congenital cardiomyopathy", 
+                                      "Other")),
+        diabetes = case_when(
+          CAN_DIAB_TY>1 & CAN_DIAB_TY<6 ~ "History of DM",
+          CAN_DIAB_TY ==1 ~ "Non-diabetic",
+          TRUE ~ "Unknown"
+        ),
+        diabetes = factor(diabetes),
+        female_gfr = if_else(sex == "F", 0.742, 1),
+        black_gfr = if_else(race == "Black", 1.21, 1),
+        eGFR = 175*((CAN_MOST_RECENT_CREAT)^(-1.154))*(rec_age^(-0.203))*female_gfr*black_gfr,
+        functional_status = case_when(
+          CAN_FUNCTN_STAT == 1 | (CAN_FUNCTN_STAT>2069) ~"Limited Impairment, 100-70%",
+          CAN_FUNCTN_STAT ==2 | (CAN_FUNCTN_STAT>2049 & CAN_FUNCTN_STAT<2061) ~ "Moderate Impairment, 50-60%",
+          CAN_FUNCTN_STAT == 3 | (CAN_FUNCTN_STAT>2000 & CAN_FUNCTN_STAT<2041) ~ "Severe Impairment ≥ 40%%",
+          TRUE ~ "Unknown"
+        ),
+        functional_status = ifelse(is.na(functional_status), "Unknown", functional_status),
+        functional_status = factor(functional_status),
+        pcwp = CAN_PCW_MEAN,
+        body_surface_area = 0.007184*(CAN_HGT_CM)^(0.725)*CAN_WGT_KG^(0.425),
+        cardiac_index = as.numeric(CAN_CARDIAC_OUTPUT/body_surface_area),
+        cardiac_index = ifelse(cardiac_index>10, NA, cardiac_index),
+        payor = case_when(
+          CAN_PRIMARY_PAY %in% c(3,4,13) ~ "Medicare",
+          CAN_PRIMARY_PAY ==2 ~ "Medicaid",
+          CAN_PRIMARY_PAY == 1 ~ "Private",
+          TRUE ~ "Other"
+        ),
+        History_of_Smoking = case_when(
+           CAN_HIST_CIGARETTE == "Y" ~ "Smoking history",
+           CAN_HIST_CIGARETTE == "N" ~ "No prior smoking history"),
+        Working = case_when(
+           CAN_WORK_INCOME == "N" ~ "Not working",
+           CAN_WORK_INCOME == "Y" ~ "Working"),
+        Education_Status = case_when(
+          CAN_EDUCATION %in% c(4,5,6) ~ "College",
+          CAN_EDUCATION == 3 ~ "High School",
+          TRUE ~ "Less than high school or other"
+        ),
+        rec_abo = factor(
+           case_when(
+             rec_abo %in% c("A", "A1", "A2") ~ "A",
+             rec_abo %in% c("A1B", "A2B") ~ "AB",
+             TRUE ~ rec_abo)
+           ),
+        don_abo = factor(
+           case_when(
+             don_abo %in% c("A", "A1", "A2") ~ "A",
+             don_abo %in% c("A1B", "A2B") ~ "AB",
+             TRUE ~ don_abo)
+           )
+  )  %>% 
+    mutate(
+    to_die = case_when(
+      CAN_REM_CD %in% c(8, 21)==TRUE ~ 1 ,
+      last_stat %in% c("D", "R") ==TRUE ~1,
+      is.na(PERS_OPTN_DEATH_DT) == FALSE ~ 1,
+      is.na(PERS_SSA_DEATH_DT) == FALSE ~ 1,
+      TRUE ~0
+  ),
+  dead_date = case_when(
+      is.na(PERS_OPTN_DEATH_DT) == FALSE ~ PERS_OPTN_DEATH_DT,
+      TRUE ~ PERS_SSA_DEATH_DT),
+  rem_dt = CAN_REM_DT,
+  final_dt = case_when(
+    is.na(dead_date) == FALSE ~ dead_date,
+    is.na(last_date) == FALSE ~ last_date,
+    TRUE ~ rem_dt),
+  obs_days = final_dt - tx_date
+)
 ```
 
+write output data
+```{r write output}
+write_csv(final_sample2, "C:/Users/julia/SRP/S&D/dataset/final_sample.csv")
+
+```
 1. Calculate mean ischemic time by status tier, treatment, and policy period
 ```{r ischemic time by status tier}
 #by status
@@ -931,7 +1025,7 @@ ischemic_by_status <- final_sample %>% #n = 6,737
             sd=sd(ischemic_time),
             n=n(), 
             se=sd/sqrt(n)          
-)
+) 
 
 View(ischemic_by_status)
 ggplot(ischemic_by_status, aes(x=six_status, y=avg, group=policy, color=policy)) + 
@@ -966,5 +1060,3 @@ ggplot(ischemic_by_policy, aes(x=policy, y=avg)) +
 
 t.test(ischemic_time ~ policy, data = final_sample1, var.equal = TRUE)
 ```
-
-3. calculate survival time for each person
