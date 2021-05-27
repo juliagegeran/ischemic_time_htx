@@ -1,0 +1,170 @@
+---
+title: Tidyverse Practice
+author: "Julia (Gege) Ran"
+output:
+  rmdformats::material:
+    highlight: tango
+  html_document:
+    theme: cosmo
+    toc: yes
+---
+
+This is a R markdown file to help you get familiar with tidyverse using heart transplant data. By the end of this meeting, you should be able to use the following commands to wrangle a dataset
+
+-   load appropriate packages
+-   import data
+-   create dataframe
+-   filter
+-   select
+-   mutate
+-   join dataframes
+-   generate basic summary data
+-   generate basic summary graphs
+-   export dataset
+
+1. load packages
+
+```{r load packages}
+
+```
+
+2. Load tx_hr and cand_thor into your environment
+
+```{r load data}
+
+```
+
+3.  Define your study time frame
+
+    In this study, we are only interested in patients who received transplant between 2016-10-20 to 2017-12-31 or 2018-10-20 to 2019-12-31.
+
+```{r study time frame}
+
+```
+
+4.  Select your study population
+
+From tx_hr, we select only qualifying adult, heart-only transplant recipients listed in the aforementioned time range.
+
+```{r initial candidate list}
+#init_list will be a subset of observations in tx_hr
+
+#1. Using tx_hr, make a dataframe called init_list with a new column called tx_date (transplant date), which is equal in value as the variable REC_TX_DT in tx_hr
+
+
+#2. Using filter(), keep only recipients whose tx_date is within the pre-defined study period and remove everyone who never got a transplant or was transplanted outside of the study period
+  
+#case_when() - specify the input into a new column based on conditions, when the condition is not boolian
+
+#ifelse() - specify the input into a new column based on boolian conditions
+
+#is.na() - determine if an element is empty (TRUE) or not (FALSE)
+
+#!is.na() - opposite of is.na(), determine if an element is NOT empty 
+
+#"!" in front of most operations means negation
+
+```
+
+Using mutate() and filter(), we can apply a wide range of inclusion and exclusion criteria, such as:
+
+-   Age \<= 17 yo at the time of listing
+-   Recipient of multiple transplants
+-   Inactive listing status
+-   Transplant center conducted fewer than 5 heart-alone transplants in either of the two study periods
+-   Did not receive a transplant
+-   Had inappropriate listing status at the time of transplantation (e.g. had Status 1A/1B/2 assignment after the policy switch)
+
+As an exercise, let's try to identify low-volume transplant centers, and drop all observations from these centers. To do that, we need to 
+
+1) find out the total number of heart transplants done by each transplant center in each policy period
+
+2) generate a roster of transplant centers that are low-volume (i.e. # transplant <5 per policy period)
+
+3) drop all observations from these identified transplant centers from init_list
+
+
+```{r drop low-volume centers step 1}
+#find transplant volume per center per policy period
+
+#SRTR data dictionary: CAN_REM_CD describes reasons why a candidate was removed from the waitlist. CAN_REM_CD ==4 means the person was removed because they got a transplant
+
+#create a new binary variable transplant that takes the value of 1 if the person received a transplant, and 0 if the patient was removed due to some other reason. 
+
+
+
+
+
+
+
+
+
+#select() - keep only the specified columns
+#group_by() - carry out the following commands for each group, until ungroup() is specified
+#distinct() - keep only distinct rows
+#spread() - reshapes the dataset from long to wide by values in a key variable
+
+
+
+
+
+#alternatively, what happens if we use the count() function?
+#count() - sums up the number of rows in the whole dataset or by group 
+
+
+
+
+
+
+
+  
+# we end up finding fewer low-volume centers because count() will not include rows where n=0. So if center #112 had 12 transplants pre-policy and 0 post-policy, count() won't make a row for the group (center #112 + post_policy). As a result, we would miss this center.   
+```
+
+```{r drop low-volume centers step 2}
+#generate a roster of transplant centers that are low-volume (i.e. # transplant <5 per policy period)
+
+#pull() - converts a datafram to a vector
+
+
+```
+
+```{r drop low-volume cetners step 3}
+#drop all observations from these identified transplant centers from init_list
+
+# %in% allows you to filter observations by their presence in another vector/dataframe
+
+
+
+```
+
+5.  Keep only candidate ID, policy period, name of the center that they are transplanted at, and the date of their transplant from init_list2.
+```{r simplify init_list2}
+
+```
+
+6. Find the diagnosis, mean PCW, height, weight and cardiac output of each patient in cand_thor and join that column to init_list3 to create init_list4
+
+```{r join cand_thor}
+#left_join() - use dataframe before the chain as a base and join columns from another dataset on the left side. 
+
+#by: specifies which row from the outside dataset should be joined with which row in the present dataset
+
+
+
+```
+
+7. Do some sanity check. What is the size of each policy cohort? 
+
+```{r sanity check}
+# see how I am not using the assign "<-" symbol? I don't need to save this result, I just want to see it.
+
+
+
+
+#to see it in a different window, put the same commands in View(). Remember to capitalize V.
+
+
+
+
+```
